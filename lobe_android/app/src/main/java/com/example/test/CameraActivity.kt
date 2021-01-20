@@ -5,8 +5,9 @@ import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ObjectAnimator
 import android.app.Activity
-import android.app.Fragment
+import android.app.AlertDialog
 import android.content.Context
+import android.content.DialogInterface
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -15,16 +16,27 @@ import android.hardware.Camera
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.media.ImageReader
+import android.media.MediaActionSound
 import android.os.*
+import android.text.InputType
 import android.util.DisplayMetrics
 import android.util.Size
+import android.view.KeyEvent
 import android.view.Surface
 import android.view.View
+import android.view.WindowManager
 import android.view.animation.*
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.widget.*
 import androidx.annotation.RequiresApi
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import com.example.test.api.LobeApiHelper
+import com.example.test.api.LobeApiHelper.Companion.getProjects
+import com.example.test.api.LobeApiHelper.Companion.loadProject
+import com.example.test.api.LobeApiHelper.Companion.postExample
+import com.example.test.api.Project
 import com.example.test.env.ImageUtils
 import com.example.test.env.Logger
 import com.example.test.tflite.Classifier
@@ -35,7 +47,9 @@ import java.util.*
 
 
 @RequiresApi(Build.VERSION_CODES.KITKAT)
-abstract class CameraActivity :  Activity(), ImageReader.OnImageAvailableListener, Camera.PreviewCallback, CompoundButton.OnCheckedChangeListener, View.OnClickListener{
+abstract class CameraActivity : Activity(), ImageReader.OnImageAvailableListener,
+    Camera.PreviewCallback, CompoundButton.OnCheckedChangeListener, View.OnClickListener {
+
     private val debug = false
 
     private val LOGGER: Logger = Logger()
@@ -65,16 +79,30 @@ abstract class CameraActivity :  Activity(), ImageReader.OnImageAvailableListene
     var outer: View? = null
     var inputData: ByteArray? = null
 
+//    var modifyingLabel = false
+
+
+    val shutterSound = MediaActionSound()
+    var imageToUpload: ByteArray? = null
+
     private val device: Classifier.Device = Classifier.Device.CPU
 
     val nThreads: Int = 4
     private val model: Classifier.Model = Classifier.Model.FLOAT_MOBILENET
 
+//    public fun setModifyingLabel(isModifying: Boolean) {
+//        modifyingLabel = isModifying
+//    }
+
+//    public fun setModifying(isModifying: Boolean) {
+//        modifyingLabel = isModifying
+//    }
+
     fun getNumThreads(): Int {
         return nThreads
     }
 
-    fun setMode(useimg: Boolean){
+    public fun setMode(useimg: Boolean) {
         useImage = useimg
     }
 
@@ -86,7 +114,11 @@ abstract class CameraActivity :  Activity(), ImageReader.OnImageAvailableListene
         return device
     }
 
-    @RequiresApi(Build.VERSION_CODES.LOLLIPOP)
+    protected var projects = listOf<Project>()
+    protected var project_names = arrayOf<String>()
+    protected var skipPrediction = false
+
+    @RequiresApi(Build.VERSION_CODES.O)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -95,6 +127,59 @@ abstract class CameraActivity :  Activity(), ImageReader.OnImageAvailableListene
         label = findViewById(R.id.textView)
         progressBar = findViewById(R.id.ProgressBar)
         outer = findViewById(R.id.relativeLayout)
+
+
+        // TODO - Proposal
+        // Image onClick - upload unlabeled
+        // Text onClick - upload labeled
+        // Text onLongClick -- modify label + upload (stretch goal)
+
+        label!!.setCursorVisible(false);
+
+        // Text onClick - upload labeled
+        label!!.setOnClickListener {
+            println("clicked")
+            postLabeledImage(imageToUpload!!, label!!.text.toString())
+        }
+
+        // Text onLongClick -- modify label + upload (stretch goal)
+        label!!.setOnLongClickListener {
+            println("long clicked")
+            label!!.setCursorVisible(true);
+            label!!.setFocusableInTouchMode(true);
+            label!!.setInputType(InputType.TYPE_CLASS_TEXT);
+            label!!.requestFocus();
+            val imm: InputMethodManager =
+                getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+            imm.showSoftInput(label, InputMethodManager.SHOW_IMPLICIT)
+            (label!! as EditTextBackEvent).modifyingLabel = true
+            true
+        }
+
+        label!!.setOnEditorActionListener(
+            object : TextView.OnEditorActionListener {
+                override fun onEditorAction(
+                    v: TextView?,
+                    actionId: Int,
+                    event: KeyEvent?
+                ): Boolean {
+                    if (actionId == EditorInfo.IME_ACTION_SEARCH || actionId == EditorInfo.IME_ACTION_DONE || event != null && event.action == KeyEvent.ACTION_DOWN && event.keyCode == KeyEvent.KEYCODE_ENTER
+                    ) {
+                        if (event == null || !event.isShiftPressed) {
+                            // the user is done typing.
+                            label!!.focusable = 0
+                            (label!! as EditTextBackEvent).modifyingLabel = false
+                            println("new label:")
+                            println(label!!.text)
+                            postLabeledImage(imageToUpload!!, label!!.text.toString())
+                            return false // consume.
+                        }
+                    }
+                    (label!! as EditTextBackEvent).modifyingLabel = false
+                    return false // pass on to other listeners.
+                }
+            }
+        )
 
         val displayMetrics = DisplayMetrics()
         windowManager.defaultDisplay.getMetrics(displayMetrics)
@@ -107,6 +192,21 @@ abstract class CameraActivity :  Activity(), ImageReader.OnImageAvailableListene
             requestPermission()
         }
 
+        // Fetching the projects available
+        getProjects(this) { projects ->
+            this.projects = projects
+            for (project in projects) {
+                this.project_names += project.name
+            }
+
+            LOGGER.w("Projects: " + this.projects.toString())
+            // Use the most recent project (first)
+            LobeApiHelper.projectId = this.projects[0].id
+            loadLatestProject()
+        }
+
+
+        shutterSound.load(MediaActionSound.SHUTTER_CLICK)
         outer!!.setOnTouchListener(object : OnSwipeTouchListener(this) {
             override fun onSwipeTop() {
                 val intent = Intent()
@@ -119,12 +219,19 @@ abstract class CameraActivity :  Activity(), ImageReader.OnImageAvailableListene
                 overridePendingTransition(R.anim.slide_animation, R.anim.slide_animation);
             }
 
-            override fun doubleTap() {
+            override fun onSwipeBottom() {
                 changeCam()
+            }
+
+            @RequiresApi(Build.VERSION_CODES.O)
+            override fun doubleTap() {
+                postUnlabeledImage(imageToUpload!!)
             }
 
             override fun tripleTap() {
                 takeScreenshot();
+                //processImage(true)
+                // TODO Upload to lobe!
             }
         })
     }
@@ -168,9 +275,50 @@ abstract class CameraActivity :  Activity(), ImageReader.OnImageAvailableListene
         System.out.println("not implemented (should not be needed)")
     }
 
-    // for debugging purpose
     open fun onClickBtn(v: View?) {
-        takeScreenshot()
+
+//        val inflater: LayoutInflater = layoutInflater
+//        val dialoglayout: View = inflater.inflate(R.layout.dialog_layout, null)
+//        val builder = AlertDialog.Builder(this)
+//        builder.setView(dialoglayout)
+//        builder.show()
+
+        val builder = AlertDialog.Builder(this)
+        builder.setTitle("Settings")
+
+        val layout = LinearLayout(this)
+        layout.orientation = LinearLayout.VERTICAL
+        val ip_msg = TextView(this)
+        ip_msg.setText("Set IP Address")
+        layout.addView(ip_msg)
+
+        val input = EditText(this)
+        input.hint = LobeApiHelper.urlHost
+        layout.addView(input)
+
+        builder.setView(layout)
+
+        builder.setSingleChoiceItems(this.project_names, this.projectIndex) { dialog, which ->
+            this.projectIndex = which
+            LobeApiHelper.projectId = this.projects[which].id
+            loadLatestProject()
+//            Toast.makeText(applicationContext, this.project_names[which], Toast.LENGTH_LONG).show()
+//            dialog.dismiss()
+        }
+
+        builder.setPositiveButton("OK", object : DialogInterface.OnClickListener {
+            override fun onClick(dialog: DialogInterface?, which: Int) {
+                if (input.text.toString().length > 0) {
+                    LobeApiHelper.urlHost = input.text.toString()
+                }
+            }
+        })
+        builder.setNegativeButton("Cancel", object : DialogInterface.OnClickListener {
+            override fun onClick(dialog: DialogInterface, which: Int) {
+                dialog.cancel()
+            }
+        })
+        builder.show()
     }
 
     @RequiresApi(Build.VERSION_CODES.LOLLIPOP)
@@ -194,13 +342,33 @@ abstract class CameraActivity :  Activity(), ImageReader.OnImageAvailableListene
         oa1.start()
     }
 
+    private fun loadLatestProject()
+    {
+        label!!.text = "Loading..."
+        skipPrediction = true // Lee did this silly hack
+        loadProject(this, LobeApiHelper.projectId) { success ->
+
+            if (success) {
+                skipPrediction = false
+            } else {
+                label!!.text = "Failed - Retry"
+            }
+        }
+    }
+
     private fun takeScreenshot() {
         if (!useImage) {
             val matrix = Matrix()
             matrix.postRotate(90f)
-            var targetWidth = previewWidth!!.toFloat() / previewHeight!!.toFloat() * screenHeight!!.toFloat()
+            var targetWidth =
+                previewWidth!!.toFloat() / previewHeight!!.toFloat() * screenHeight!!.toFloat()
             val scaledBitmap =
-                Bitmap.createScaledBitmap(rgbFrameBitmap!!, targetWidth!!.toInt(), screenHeight!!, true)
+                Bitmap.createScaledBitmap(
+                    rgbFrameBitmap!!,
+                    targetWidth!!.toInt(),
+                    screenHeight!!,
+                    true
+                )
             val rotatedBitmap = Bitmap.createBitmap(
                 scaledBitmap,
                 0,
@@ -211,13 +379,18 @@ abstract class CameraActivity :  Activity(), ImageReader.OnImageAvailableListene
                 true
             )
             var w = screenWidth!!.toFloat() / screenHeight!!.toFloat() * rotatedBitmap.height
-            var resizedbitmap1 = Bitmap.createBitmap(rotatedBitmap, 0, 0, w.toInt(), rotatedBitmap.height)
+            var resizedbitmap1 =
+                Bitmap.createBitmap(rotatedBitmap, 0, 0, w.toInt(), rotatedBitmap.height)
             imageView!!.setImageBitmap(resizedbitmap1)
         }
 
         var iv: ImageView = findViewById(R.id.allWhite)
         iv.visibility = View.VISIBLE
-        val animation: Animation = AlphaAnimation(0.toFloat(), 1.toFloat()) //to change visibility from visible to invisible
+        val animation: Animation =
+            AlphaAnimation(
+                0.toFloat(),
+                1.toFloat()
+            ) //to change visibility from visible to invisible
         animation.duration = 100 //1 second duration for each animation cycle
         animation.interpolator = LinearInterpolator()
         animation.repeatCount = 1 //repeating indefinitely
@@ -229,7 +402,8 @@ abstract class CameraActivity :  Activity(), ImageReader.OnImageAvailableListene
         val simpleDateFormat = SimpleDateFormat(pattern)
         val date: String = simpleDateFormat.format(Date())
         try {
-            val storageLoc = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
+            val storageLoc =
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES) //context.getExternalFilesDir(null);
 
             // create bitmap screen capture
             val v1 = outer!!
@@ -237,7 +411,11 @@ abstract class CameraActivity :  Activity(), ImageReader.OnImageAvailableListene
             val bitmap = Bitmap.createBitmap(v1.drawingCache)
             v1.isDrawingCacheEnabled = false
 
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED) {
+            if (ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.WRITE_EXTERNAL_STORAGE
+                ) == PackageManager.PERMISSION_GRANTED
+            ) {
                 // Do the file write
                 val imageFile = File(storageLoc, date + ".jpg")
                 val outputStream = FileOutputStream(imageFile)
@@ -247,16 +425,18 @@ abstract class CameraActivity :  Activity(), ImageReader.OnImageAvailableListene
                 outputStream.close()
             } else {
                 // Request permission from the user
-                ActivityCompat.requestPermissions(this,
+                ActivityCompat.requestPermissions(
+                    this,
                     arrayOf(Manifest.permission.WRITE_EXTERNAL_STORAGE),
-                    0)
+                    0
+                )
             }
         } catch (e: Throwable) {
             // Several error may come out with file handling or DOM
             e.printStackTrace()
         }
 
-        if (!useImage){
+        if (!useImage) {
             imageView!!.setImageBitmap(null)
         }
     }
@@ -300,7 +480,27 @@ abstract class CameraActivity :  Activity(), ImageReader.OnImageAvailableListene
     override fun onCheckedChanged(p0: CompoundButton?, p1: Boolean) {
     }
 
+    @RequiresApi(Build.VERSION_CODES.O)
     override fun onClick(p0: View?) {
+        println("view???")
+        println(p0)
+        postUnlabeledImage(imageToUpload!!)
+    }
+
+    // TODO This should come from a settings object
+    protected var projectId = ""
+    protected var projectIndex = 0
+
+    @RequiresApi(Build.VERSION_CODES.O)
+    private fun postUnlabeledImage(imageBytes: ByteArray) {
+        shutterSound.play(MediaActionSound.SHUTTER_CLICK)
+        postExample(this, { r: Runnable -> runInBackground(r) }, imageBytes, null)
+    }
+
+    @RequiresApi(Build.VERSION_CODES.O)
+    private fun postLabeledImage(imageBytes: ByteArray, label: String) {
+        shutterSound.play(MediaActionSound.SHUTTER_CLICK)
+        postExample(this, { r: Runnable -> runInBackground(r) }, imageBytes, label)
     }
 
     private fun hasPermission(): Boolean {
@@ -328,11 +528,13 @@ abstract class CameraActivity :  Activity(), ImageReader.OnImageAvailableListene
         }
     }
 
+    private var cameraId: String? = null
+    private var fragment: LegacyCameraConnectionFragment? = null
+
     @RequiresApi(Build.VERSION_CODES.LOLLIPOP)
     protected open fun setFragment(useFront: Boolean) {
-        val cameraId: String? = chooseCamera()
-        val fragment: Fragment
-        fragment = LegacyCameraConnectionFragment(
+        this.cameraId = chooseCamera()
+        this.fragment = LegacyCameraConnectionFragment(
             this,
             getLayoutId(),
             getDesiredPreviewFrameSize(),
@@ -340,7 +542,20 @@ abstract class CameraActivity :  Activity(), ImageReader.OnImageAvailableListene
             screenHeight!!,
             screenWidth!!
         )
-        fragmentManager.beginTransaction().replace(R.id.container, fragment).commit()
+        fragmentManager.beginTransaction().replace(R.id.container, this.fragment).commit()
+    }
+
+    @RequiresApi(Build.VERSION_CODES.LOLLIPOP)
+    protected open fun getIsFrontFacing(): Boolean {
+        val id = this.fragment!!.getCameraId()
+        val ci = Camera.CameraInfo()
+        for (i in 0 until Camera.getNumberOfCameras()) {
+            Camera.getCameraInfo(i, ci)
+            if (i == id) {
+                return ci.facing == Camera.CameraInfo.CAMERA_FACING_FRONT
+            }
+        }
+        return false
     }
 
     @RequiresApi(Build.VERSION_CODES.LOLLIPOP)
@@ -394,7 +609,7 @@ abstract class CameraActivity :  Activity(), ImageReader.OnImageAvailableListene
 
     @Synchronized
     fun runInBackground(r: Runnable) {
-    handler?.post(r)
+        handler?.post(r)
     }
 
     @Synchronized

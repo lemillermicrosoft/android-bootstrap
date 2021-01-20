@@ -1,5 +1,10 @@
 <div style="text-align:center"><img src="https://github.com/lobe/android-bootstrap/raw/main/assets/header.jpg" /></div>
 
+## Lobe Android Bootstrap *with API*
+
+This builds upon the [android-bootstrap](https://github.com/lobe/android-bootstrap) project used to consume Lobe Exported Tensorflow Lite models. Instead, this project uses available APIs for retrieving predictions and appending project example sets.
+
+
 [Lobe](http://lobe.ai/) is an easy-to-use free tool to help you start working with machine learning.
 
 This project was created to help you bootstrap your Lobe project on android. Built with [Kotlin](https://kotlinlang.org).
@@ -44,17 +49,9 @@ Once it's done, open on this repository from inside Android Studio.
 
 Now we need to export your custom model from Lobe. If you'd like, you can skip to the [deploying your app](#deploying-your-app) section if you just want to see this app working with the default sample model.
 
-### Step 3 - Exporting your model
+### Step 3 - Turn On Lobe
 
-Once you've trained a custom model in Lobe, you can drop it into your app.
-
-First, let's open your project in Lobe and export it by pressing `⌘E` and selecting Tensorflow Light.
-
-Once you have the Tensorflow Light model, rename it to `model_unquant.tflite` and drag it into this repo to replace the existing model files: 
-* `lobe_android/app/src/main/assets/model_unquant.tflite`
-* `lobe_android/app/src/main/assets/labels.txt`
-
-And we're done! Next let's get it on your phone so you can see it work live.
+This project connects to your instance of Lobe on the same machine or local network by referencing it's IP. In the future, we'd like to replace this manual step with an automatic connection. After starting Lobe, determine your machines IP and set it in the code or in-app after deploying.
 
 ### Step 4 - Deploying your app
 
@@ -73,5 +70,3 @@ If you can think of anything you'd like to add, or bugs you find, please reach o
 For project ideas or feedback, please visit our community on [Reddit](https://www.reddit.com/r/Lobe/)!
 
 We look forward to seeing the awesome projects you put out there into the world! Cheers!
-
-![team sig](https://github.com/lobe/iOS-bootstrap/raw/master/assets/lobeteam.png)

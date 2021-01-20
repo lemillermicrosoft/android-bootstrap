@@ -61,7 +61,7 @@ android:background="#00000000">
         app:layout_constraintStart_toStartOf="@+id/relativeLayout"
         app:layout_constraintTop_toTopOf="@+id/relativeLayout" />
 
-    <TextView
+    <com.example.test.EditTextBackEvent
         android:id="@+id/textView"
         android:layout_height="50dp"
         android:layout_width="match_parent"
@@ -71,14 +71,28 @@ android:background="#00000000">
         android:layout_marginRight="40dp"
         android:elevation="1dp"
         android:gravity="center|left"
-        android:text="default"
+        android:text="Loading..."
         android:textColor="@android:color/white"
         android:textSize="30sp"
+        android:background="@null"
+        android:focusable="false"
+
+        android:longClickable="true"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="@+id/relativeLayout"
         app:layout_constraintTop_toTopOf="@+id/relativeLayout"
         android:fontFamily="@font/labgrotesque"/>
+
+    <ImageButton
+        android:id="@+id/button"
+        android:layout_width="50dp"
+        android:layout_height="50dp"
+        android:background="@null"
+        android:onClick="onClickBtn"
+        android:src="@drawable/settings"
+        app:layout_constraintEnd_toEndOf="@+id/container"
+        app:layout_constraintTop_toTopOf="parent" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>
 
@@ -94,12 +108,13 @@ android:background="#00000000">
         app:layout_anchorGravity="center" />
 
 <!--    button for debugging-->
-    <!--    <Button-->
+<!--        <ImageButton-->
 <!--        android:id="@+id/button"-->
 <!--        android:layout_width="wrap_content"-->
 <!--        android:layout_height="wrap_content"-->
 <!--        android:onClick="onClickBtn"-->
-<!--        android:text="Button" />-->
+<!--            android:src="@drawable/settings"-->
+<!--            android:background="@null" />-->
 
 <!--    ImageView for debugging-->
 <!--    <ImageView-->

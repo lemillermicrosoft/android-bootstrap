@@ -223,7 +223,7 @@ class LegacyCameraConnectionFragment @SuppressLint("ValidFragment") constructor(
         }
     }
 
-    private fun getCameraId(): Int {
+    open fun getCameraId(): Int {
         val ci = CameraInfo()
         for (i in 0 until Camera.getNumberOfCameras()) {
             Camera.getCameraInfo(i, ci)
